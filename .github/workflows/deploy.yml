@@ -81,4 +81,4 @@ jobs:
       - name: Display Website URL
         run: |
           echo "Website deployed successfully!"
-          echo "You can access it at: http://site-estatico-s3-daniel-website-us-east-1.amazonaws.com/"
+          echo "You can access it at: http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/"
