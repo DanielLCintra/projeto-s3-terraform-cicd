@@ -1,0 +1,84 @@
+name: Deploy Infrastructure and Website
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve
+
+      - name: Get Terraform Outputs
+        id: terraform_output
+        run: |
+          cd terraform
+          WEBSITE_ENDPOINT=$(terraform output -raw website_endpoint)
+          echo "::set-output name=website_endpoint::$WEBSITE_ENDPOINT"
+
+  deploy:
+    name: 'Deploy Website'
+    needs: terraform
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update deploy timestamp
+        run: |
+          current_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          sed -i "s/new Date()/new Date('$current_time')/g" js/script.js
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync . s3://site-estatico-s3 --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
+
+      - name: Display Website URL
+        run: |
+          echo "Website deployed successfully!"
+          echo "You can access it at: http://site-estatico-s3-website-us-east-1.amazonaws.com/"
