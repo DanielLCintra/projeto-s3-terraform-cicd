@@ -41,6 +41,10 @@ jobs:
           else
             echo "O bucket $BUCKET_NAME não existe ou não está acessível."
           fi
+          
+          # Definir o nome do bucket como uma variável de ambiente para uso posterior
+          echo "BUCKET_NAME=site-estatico-s3-daniel" >> $GITHUB_ENV
+          echo "WEBSITE_URL=http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/" >> $GITHUB_ENV
 
   terraform:
     name: 'Terraform'
@@ -82,20 +86,18 @@ jobs:
         run: |
           cd terraform
           terraform apply -auto-approve
-
-      - name: Get Terraform Outputs
-        id: terraform_output
-        run: |
-          cd terraform
-          BUCKET_NAME=$(terraform output -raw bucket_name || echo "site-estatico-s3-daniel")
-          WEBSITE_URL=$(terraform output -raw website_url || echo "http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/")
-          echo "bucket_name=${BUCKET_NAME}" >> $GITHUB_OUTPUT
-          echo "website_url=${WEBSITE_URL}" >> $GITHUB_OUTPUT
+          
+          # Usar variáveis de ambiente definidas no job anterior
+          echo "BUCKET_NAME=${{ env.BUCKET_NAME }}" >> $GITHUB_ENV
+          echo "WEBSITE_URL=${{ env.WEBSITE_URL }}" >> $GITHUB_ENV
 
   deploy:
     name: 'Deploy Website'
     needs: terraform
     runs-on: ubuntu-latest
+    env:
+      BUCKET_NAME: site-estatico-s3-daniel
+      WEBSITE_URL: http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/
     
     steps:
       - name: Checkout code
@@ -117,14 +119,10 @@ jobs:
 
       - name: Deploy to S3
         run: |
-          BUCKET_NAME="${{ needs.terraform.outputs.bucket_name }}"
-          BUCKET_NAME=${BUCKET_NAME:-site-estatico-s3-daniel}
           echo "Deployando para o bucket: $BUCKET_NAME"
           aws s3 sync . s3://$BUCKET_NAME --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
 
       - name: Display Website URL
         run: |
-          WEBSITE_URL="${{ needs.terraform.outputs.website_url }}"
-          WEBSITE_URL=${WEBSITE_URL:-http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/}
           echo "Website deployed successfully!"
           echo "You can access it at: $WEBSITE_URL"
