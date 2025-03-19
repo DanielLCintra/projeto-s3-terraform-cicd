@@ -6,8 +6,34 @@ on:
       - main
 
 jobs:
+  create_bucket:
+    name: 'Ensure Bucket Exists'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Check if bucket exists
+        id: check_bucket
+        run: |
+          BUCKET_NAME="site-estatico-s3-daniel"
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>&1 | grep -q 'Not Found' || aws s3api head-bucket --bucket "$BUCKET_NAME" 2>&1 | grep -q 'Forbidden'; then
+            echo "O bucket $BUCKET_NAME não existe ou não está acessível. Criando..."
+            aws s3api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
+            echo "bucket_created=true" >> $GITHUB_OUTPUT
+          else
+            echo "O bucket $BUCKET_NAME já existe."
+            echo "bucket_created=false" >> $GITHUB_OUTPUT
+          fi
+
   terraform:
     name: 'Terraform'
+    needs: create_bucket
     runs-on: ubuntu-latest
     
     steps:
@@ -25,6 +51,116 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+
+      - name: Create main.tf using AWS CLI approach
+        run: |
+          mkdir -p terraform
+          cat > terraform/main.tf << 'EOF'
+provider "aws" {
+  region = var.aws_region
+}
+
+# O bucket já foi criado no job anterior
+# Referencia diretamente o ID do bucket existente
+locals {
+  bucket_id = var.bucket_name
+}
+
+# Configuração para hospedagem de site
+resource "aws_s3_bucket_website_configuration" "website_config" {
+  bucket = local.bucket_id
+  
+  index_document {
+    suffix = "index.html"
+  }
+  
+  error_document {
+    key = "error.html"
+  }
+}
+
+# Torna o bucket público
+resource "aws_s3_bucket_public_access_block" "website_public_access" {
+  bucket = local.bucket_id
+  
+  block_public_acls       = false
+  block_public_policy     = false
+  ignore_public_acls      = false
+  restrict_public_buckets = false
+}
+
+# Política de permissão para acesso público aos arquivos do bucket
+resource "aws_s3_bucket_policy" "website_policy" {
+  bucket = local.bucket_id
+  
+  depends_on = [aws_s3_bucket_public_access_block.website_public_access]
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Principal = "*"
+        Action = [
+          "s3:GetObject"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "arn:aws:s3:::${local.bucket_id}/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Configuração de CORS (opcional)
+resource "aws_s3_bucket_cors_configuration" "website_cors" {
+  bucket = local.bucket_id
+  
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_origins = ["*"]
+    max_age_seconds = 3000
+  }
+}
+EOF
+
+          cat > terraform/variables.tf << 'EOF'
+variable "aws_region" {
+  description = "Região da AWS onde os recursos serão criados"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "bucket_name" {
+  description = "Nome do bucket S3 para hospedar o site"
+  type        = string
+  default     = "site-estatico-s3-daniel"
+}
+
+variable "environment" {
+  description = "Ambiente (ex: development, production)"
+  type        = string
+  default     = "production"
+}
+EOF
+
+          cat > terraform/outputs.tf << 'EOF'
+output "website_endpoint" {
+  value       = aws_s3_bucket_website_configuration.website_config.website_endpoint
+  description = "Endpoint do site no S3"
+}
+
+output "bucket_name" {
+  value       = var.bucket_name
+  description = "Nome do bucket S3"
+}
+
+output "website_url" {
+  value       = "http://${aws_s3_bucket_website_configuration.website_config.website_endpoint}"
+  description = "URL do site"
+}
+EOF
 
       - name: Terraform Init
         run: |
@@ -78,20 +214,12 @@ jobs:
             sed -i "s/new Date()/new Date('$current_time')/g" js/script.js
           fi
 
-      - name: Get bucket name from previous job
-        env:
-          BUCKET_NAME: ${{ needs.terraform.outputs.bucket_name }}
-        run: |
-          echo "Using bucket: ${BUCKET_NAME:-site-estatico-s3-daniel}"
-          echo "BUCKET_NAME=${BUCKET_NAME:-site-estatico-s3-daniel}" >> $GITHUB_ENV
-
       - name: Deploy to S3
         run: |
+          BUCKET_NAME="site-estatico-s3-daniel"
           aws s3 sync . s3://$BUCKET_NAME --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
 
       - name: Display Website URL
-        env:
-          WEBSITE_URL: ${{ needs.terraform.outputs.website_url }}
         run: |
           echo "Website deployed successfully!"
-          echo "You can access it at: ${WEBSITE_URL:-http://$BUCKET_NAME.s3-website-us-east-1.amazonaws.com/}"
+          echo "You can access it at: http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/"
