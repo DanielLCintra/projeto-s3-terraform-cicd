@@ -76,9 +76,9 @@ jobs:
 
       - name: Deploy to S3
         run: |
-          aws s3 sync . s3://site-estatico-s3 --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
+          aws s3 sync . s3://site-estatico-s3-daniel --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
 
       - name: Display Website URL
         run: |
           echo "Website deployed successfully!"
-          echo "You can access it at: http://site-estatico-s3-website-us-east-1.amazonaws.com/"
+          echo "You can access it at: http://site-estatico-s3-daniel-website-us-east-1.amazonaws.com/"
