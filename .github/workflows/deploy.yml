@@ -50,8 +50,10 @@ jobs:
         id: terraform_output
         run: |
           cd terraform
-          WEBSITE_ENDPOINT=$(terraform output -raw website_endpoint)
-          echo "::set-output name=website_endpoint::$WEBSITE_ENDPOINT"
+          BUCKET_NAME=$(terraform output -raw bucket_name)
+          WEBSITE_URL=$(terraform output -raw website_url)
+          echo "bucket_name=${BUCKET_NAME}" >> $GITHUB_OUTPUT
+          echo "website_url=${WEBSITE_URL}" >> $GITHUB_OUTPUT
 
   deploy:
     name: 'Deploy Website'
@@ -72,13 +74,24 @@ jobs:
       - name: Update deploy timestamp
         run: |
           current_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          sed -i "s/new Date()/new Date('$current_time')/g" js/script.js
+          if [ -f js/script.js ]; then
+            sed -i "s/new Date()/new Date('$current_time')/g" js/script.js
+          fi
+
+      - name: Get bucket name from previous job
+        env:
+          BUCKET_NAME: ${{ needs.terraform.outputs.bucket_name }}
+        run: |
+          echo "Using bucket: ${BUCKET_NAME:-site-estatico-s3-daniel}"
+          echo "BUCKET_NAME=${BUCKET_NAME:-site-estatico-s3-daniel}" >> $GITHUB_ENV
 
       - name: Deploy to S3
         run: |
-          aws s3 sync . s3://site-estatico-s3-daniel --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
+          aws s3 sync . s3://$BUCKET_NAME --delete --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "README.md"
 
       - name: Display Website URL
+        env:
+          WEBSITE_URL: ${{ needs.terraform.outputs.website_url }}
         run: |
           echo "Website deployed successfully!"
-          echo "You can access it at: http://site-estatico-s3-daniel.s3-website-us-east-1.amazonaws.com/"
+          echo "You can access it at: ${WEBSITE_URL:-http://$BUCKET_NAME.s3-website-us-east-1.amazonaws.com/}"
